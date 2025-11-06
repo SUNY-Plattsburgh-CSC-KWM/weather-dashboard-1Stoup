@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Weather Dashboard</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    input, select, button { margin: 5px; padding: 4px; }
+    .forecast-box { border: 1px solid #ccc; padding: 10px; margin: 5px; display: inline-block; }
+    svg { border: 1px solid #ccc; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <h2>Weather Dashboard</h2>
+  <p>Enter coordinates and select forecast or historical data.</p>
+
+  <label>Latitude: </label><input id="lat" type="number" step="0.0001" value="44.6995">
+  <label>Longitude: </label><input id="lon" type="number" step="0.0001" value="-73.4529"><br>
+
+  <label>Mode: </label>
+  <select id="mode">
+    <option value="forecast">Forecast</option>
+    <option value="historical">Historical</option>
+  </select>
+
+  <label>Temp Unit: </label>
+  <select id="unit">
+    <option value="celsius">Celsius</option>
+    <option value="fahrenheit">Fahrenheit</option>
+  </select><br>
+
+  <div id="forecast-options">
+    <label>Days (1–16): </label><input id="days" type="number" min="1" max="16" value="3">
+    <button onclick="getForecast()">Get Forecast</button>
+  </div>
+
+  <div id="historical-options" style="display:none;">
+    <label>Start Date: </label><input id="start" type="date">
+    <label>End Date: </label><input id="end" type="date">
+    <label>Parameter: </label>
+    <select id="param">
+      <option value="temperature_2m">Temperature</option>
+      <option value="dewpoint_2m">Dew Point</option>
+      <option value="relativehumidity_2m">Humidity</option>
+    </select>
+    <button onclick="getHistorical()">Get Historical</button>
+  </div>
+
+  <div id="output"></div>
+  <svg id="chart" width="700" height="300"></svg>
+
+  <script>
+    const output = document.getElementById('output');
+    const chart = d3.select('#chart');
+    const modeSelect = document.getElementById('mode');
+    const forecastOpts = document.getElementById('forecast-options');
+    const histOpts = document.getElementById('historical-options');
+
+    modeSelect.addEventListener('change', () => {
+      if (modeSelect.value === 'forecast') {
+        forecastOpts.style.display = 'block';
+        histOpts.style.display = 'none';
+        chart.selectAll('*').remove();
+      } else {
+        forecastOpts.style.display = 'none';
+        histOpts.style.display = 'block';
+        output.innerHTML = '';
+      }
+    });
+
+    const weatherIcons = {
+      0: "☀️", 1: "🌤️", 2: "⛅", 3: "☁️",
+      45: "🌫️", 48: "🌫️",
+      51: "🌦️", 61: "🌧️", 71: "🌨️",
+      80: "🌧️", 95: "⛈️"
+    };
+
+    async function getForecast() {
+      output.innerHTML = "Loading forecast...";
+      chart.selectAll('*').remove();
+
+      const lat = document.getElementById('lat').value;
+      const lon = document.getElementById('lon').value;
+      const days = document.getElementById('days').value;
+      const unit = document.getElementById('unit').value;
+
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=temperature_2m_max,temperature_2m_min,weathercode&timezone=UTC&temperature_unit=${unit}`;
+      const res = await fetch(url);
+      const data = await res.json();
+
+      const times = data.daily.time.slice(0, days);
+      const maxT = data.daily.temperature_2m_max.slice(0, days);
+      const minT = data.daily.temperature_2m_min.slice(0, days);
+      const codes = data.daily.weathercode.slice(0, days);
+
+      output.innerHTML = "";
+      for (let i = 0; i < times.length; i++) {
+        const box = document.createElement('div');
+        box.className = 'forecast-box';
+        box.innerHTML = `
+          <b>${times[i]}</b><br>
+          ${weatherIcons[codes[i]] || '❓'}<br>
+          High: ${maxT[i]}°${unit === 'celsius' ? 'C' : 'F'}<br>
+          Low: ${minT[i]}°${unit === 'celsius' ? 'C' : 'F'}
+        `;
+        output.appendChild(box);
+      }
+    }
+
+    async function getHistorical() {
+      output.innerHTML = "Loading historical data...";
+      chart.selectAll('*').remove();
+
+      const lat = document.getElementById('lat').value;
+      const lon = document.getElementById('lon').value;
+      const start = document.getElementById('start').value;
+      const end = document.getElementById('end').value;
+      const param = document.getElementById('param').value;
+      const unit = document.getElementById('unit').value;
+
+      if (!start || !end) {
+        output.innerHTML = "Please select valid dates.";
+        return;
+      }
+
+      const url = `https://archive-api.open-meteo.com/v1/era5?latitude=${lat}&longitude=${lon}&start_date=${start}&end_date=${end}&hourly=${param}&timezone=UTC&temperature_unit=${unit}`;
+      const res = await fetch(url);
+      const data = await res.json();
+
+      const times = data.hourly.time;
+      const values = data.hourly[param];
+
+      if (!times) {
+        output.innerHTML = "No data available.";
+        return;
+      }
+
+      output.innerHTML = `${param} data (${unit}) from ${start} to ${end}`;
+
+      
+      const parsedData = times.map((t, i) => ({ time: new Date(t), value: values[i] }));
+      const width = 700, height = 300, margin = 40;
+
+      const x = d3.scaleTime()
+        .domain(d3.extent(parsedData, d => d.time))
+        .range([margin, width - margin]);
+      const y = d3.scaleLinear()
+        .domain(d3.extent(parsedData, d => d.value))
+        .nice()
+        .range([height - margin, margin]);
+
+      chart.selectAll('*').remove();
+      const line = d3.line()
+        .x(d => x(d.time))
+        .y(d => y(d.value));
+
+      chart.append('g')
+        .attr('transform', `translate(0,${height - margin})`)
+        .call(d3.axisBottom(x).ticks(5));
+
+      chart.append('g')
+        .attr('transform', `translate(${margin},0)`)
+        .call(d3.axisLeft(y));
+
+      chart.append('path')
+        .datum(parsedData)
+        .attr('fill', 'none')
+        .attr('stroke', 'steelblue')
+        .attr('stroke-width', 2)
+        .attr('d', line);
+    }
+
+    
+    const now = new Date();
+    const weekAgo = new Date();
+    weekAgo.setDate(now.getDate() - 7);
+    document.getElementById('start').value = weekAgo.toISOString().split('T')[0];
+    document.getElementById('end').value = now.toISOString().split('T')[0];
+  </script>
+</body>
+</html>
